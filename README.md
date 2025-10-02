@@ -6,3 +6,6 @@ See individual R scripts for each analysis step.
 
 # 📝 Citation
 If you use this code, please cite our paper
+
+# 👥 Contact
+Maintainer: Yongqi Zheng (dundun276@126.com)
