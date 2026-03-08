@@ -18,6 +18,7 @@
 # Prerequisite: prob_and_lp_means from CAS_2_5_1_Model_performance.R
 #
 # Adapted by: Yongqi Zheng | Contact: dundun276@126.com
+# Usage: For academic non-commercial research only. Citation required.
 # ==============================================================================
 library(dplyr)    # version 1.1.4
 library(ggplot2)  # version 3.5.0
