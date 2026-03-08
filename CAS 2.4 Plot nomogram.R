@@ -173,7 +173,7 @@ prepare_nomogram_data <- function(pooled_sum, imputed_data) {
                         labels = c("No" = 0, "Yes" = 1)),
     CEA = list(label = "CEA", unit = "ng/mL", type = "continuous"),
     GFR = list(label = "GFR", unit = "mL/min", type = "continuous"),
-    NEU = list(label = "NEU", unit = expression(paste("¡Á10"^"9", "/L")), type = "continuous")
+    NEU = list(label = "NEU", unit = expression(paste("  10"^"9", "/L")), type = "continuous")
     )
   return(list(
     coefs_outcome1 = coefs_outcome_2vs1,
@@ -512,7 +512,7 @@ create_dual_line_nomogram <- function(pooled_sum, imputed_data, colors, width, h
       coeff_info <- extract_coeff_info(var)
       # Format variable label
       if(var == "NEU" && is.expression(var_info$unit)) {
-        var_label <- paste0(var_info$label, " (¡Á10^9/L)")
+        var_label <- paste0(var_info$label, " (  10^9/L)")
         } else {
           var_label <- paste0(var_info$label,
                               if(var_info$unit != "" && !is.expression(var_info$unit)) 
@@ -623,7 +623,7 @@ create_dual_line_nomogram <- function(pooled_sum, imputed_data, colors, width, h
   
   ## Add legend
   add_legend <- function() {
-    legend("topright", legend = c("CIMT thickening", "CP presence"),
+    legend("topright", legend = c("Elevated CIMT", "Established CP"),
            col = colors, lwd = 3, cex = 1.15, bty = "n")
     }
   
