@@ -232,7 +232,7 @@ pdi_results
 # Outcome 1: 0.667
 # Outcome 2: 0.480
 # Outcome 3: 0.551
-# Weigh PDI£º0.593
+# Weigh PDI  0.593
 pdi_results$pdi_mean # Mean PDI: 0.566
 
 
@@ -243,7 +243,7 @@ calculate_cstat <- function(data, exclude_outcome, model_name) {
     mutate(Outcome = droplevels(Outcome))
   roc_model <- roc(Outcome ~ prob_avg, data = filtered_data)
   std_error <- sqrt(var(roc_model))
-  cat(sprintf("%s: AUC: %.3f, 95%%CI: %.3f¨C%.3f\n", 
+  cat(sprintf("%s: AUC: %.3f, 95%%CI: %.3f C%.3f\n", 
               model_name, roc_model$auc, 
               roc_model$auc - 1.96 * std_error, roc_model$auc + 1.96 * std_error))
   return(list(
@@ -257,13 +257,13 @@ prob_mean_cat2 <- prob_and_lp_means %>%
   select(.id, Outcome, prob_avg_cat2) %>%
   rename(prob_avg = prob_avg_cat2)
 cstat_cat2 <- calculate_cstat(prob_mean_cat2, 2, 
-                              "Submodel 1 (Outcome 2vs1)") # AUC: 0.749, 95%CI: 0.702¨C0.797
+                              "Submodel 1 (Outcome 2vs1)") # AUC: 0.749, 95%CI: 0.702 C0.797
 # AUC value for Submodel 2 (filter out Outcome 2)
 prob_mean_cat3 <- prob_and_lp_means %>%
   select(.id, Outcome, prob_avg_cat3) %>%
   rename(prob_avg = prob_avg_cat3)
 cstat_cat3 <- calculate_cstat(prob_mean_cat3, 1, 
-                              "Submodel 2 (Outcome 3vs1)") # AUC: 0.790, 95%CI: 0.762¨C0.818
+                              "Submodel 2 (Outcome 3vs1)") # AUC: 0.790, 95%CI: 0.762 C0.818
 
 
 ### Nagelkerke R2
@@ -533,7 +533,7 @@ cat(sprintf("%-20s %10.4f %10.4f %10.4f %10.4f\n",
 # Polcal                  0.1530     0.1805     0.0810     0.1975
 
 cat("\n=== Calibration Parameters (Slope and Intercept) ===\n")
-outcome_names <- c("Normal group", "Thickening group", "Plaque group")
+outcome_names <- c("(A) Normal Group", "(B) Thickening Group", "(C) Plaque Group")
 method_names <- c("Original (Uncalibrated) ", 
                   "Platt Scaling           ", 
                   "Polytomous Recalibration")
@@ -593,7 +593,7 @@ for (class_idx in 0:2) {
 ### Calibration plot
 create_calibration_plot <- function(original_probs, ova_probs, polcal_probs, outcomes) {
   plot_list <- list()
-  class_names <- c("Normal group", "Thickening group", "Plaque group")
+  class_names <- c("(A) Normal Group", "(B) Thickening Group", "(C) Plaque Group")
   for (class_idx in 0:2) {
     cat(sprintf("Processing Outcome %d: %s\n", class_idx + 1, class_names[class_idx + 1]))
     
@@ -845,9 +845,9 @@ create_calibration_plot <- function(original_probs, ova_probs, polcal_probs, out
         labels = c("Original (Uncalibrated)", "Platt Scaling", "Polytomous Recalibration")
         ) +
       # Axis settings
-      scale_x_continuous(name = "Predicted probability", 
+      scale_x_continuous(name = "Predicted Probability", 
                          breaks = seq(0, 1, by = 0.2), limits = c(0, 1), expand = c(0.0, 0)) +
-      scale_y_continuous(name = "Observed proportion", 
+      scale_y_continuous(name = "Observed Proportion", 
                          breaks = seq(0, 1, by = 0.2), limits = c(0, 1), expand = c(0.0, 0)) +
       # Clear theme
       theme_classic() +
@@ -887,14 +887,18 @@ calibration_plots <- create_calibration_plot(
   individual_data$Outcome
   )
 
-if (length(calibration_plots) > 0) {
-  for (i in 1:length(calibration_plots)) {
-    if (!is.null(calibration_plots[[i]])) {
-      print(calibration_plots[[i]])
-      # Save high-quality plots
-      ggsave(filename = paste0("Calibration_Plot_Outcome_", i, ".png"),
-             plot = calibration_plots[[i]],
-             width = 7, height = 7, units = "in", dpi = 600, pointsize = 12, bg = "white")
-      }
-    }
+library(patchwork)
+
+valid_plots <- Filter(Negate(is.null), calibration_plots)
+
+if (length(valid_plots) == 3) {
+  # Ñ¹  Ã¿    Í¼ Ä¶     ß¾ 
+  trim_top <- function(p) {
+    p + theme(plot.margin = margin(t = 2, r = 12, b = 6, l = 7))
   }
+  fig_calibration <- trim_top(valid_plots[[1]]) |
+    trim_top(valid_plots[[2]]) |
+    trim_top(valid_plots[[3]])
+  ggsave("Figure_Calibration.png", plot = fig_calibration,
+         width = 21, height = 7, units = "in", dpi = 300, bg = "white")
+}
