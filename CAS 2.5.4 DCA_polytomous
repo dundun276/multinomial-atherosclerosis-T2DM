@@ -1,0 +1,414 @@
+# ==============================================================================
+# Polytomous Decision Curve Analysis for Multinomial Prediction Model
+# ==============================================================================
+# References:
+#   Quintana AN et al. medRxiv. 2025. doi:10.1101/2025.04.26.25326499
+#   Talluri & Shete. BMC Med Inform Decis Mak. 2016;16:1-9  (wAUCsNB)
+#   Vickers & Elkin. Med Decis Making. 2006;26:565-574      (DCA)
+#
+# Outcome coding (factor levels "0","1","2"):
+#   0 = Normal  (baseline, cat1, prob_avg_cat1)
+#   1 = Thickening          (cat2, prob_avg_cat2)
+#   2 = Plaque              (cat3, prob_avg_cat3)
+#
+# OVR binary comparisons:
+#   PRIMARY:   Plaque (2) vs. Non-Plaque (0+1)       -> pred_plaque = prob_avg_cat3
+#   SECONDARY: Any abnormality (1+2) vs. Normal (0)  -> pred_any   = prob_avg_cat2 + prob_avg_cat3
+#
+# Prerequisite: prob_and_lp_means from CAS_2_5_1_Model_performance.R
+#
+# Adapted by: Yongqi Zheng | Contact: dundun276@126.com
+# ==============================================================================
+library(dplyr)    # version 1.1.4
+library(ggplot2)  # version 3.5.0
+library(dcurves)  # version 0.5.0
+library(patchwork)# version 1.2.0
+
+set.seed(123)
+
+
+# ==============================================================================
+# Section 1: Data Preparation
+# ==============================================================================
+
+dca_data <- prob_and_lp_means %>%
+  mutate(
+    # Numeric outcome for binary coding
+    outcome_num = as.integer(as.character(Outcome)),
+    
+    # ------------------------------------------------------------------
+    # Binary comparison 1 (PRIMARY): Plaque vs. Non-Plaque
+    # Clinical rationale: Plaque (Outcome level "2") indicates established
+    # atherosclerosis. Identifying plaque drives decisions for statin
+    # intensification, antiplatelet therapy, and specialist referral.
+    # ------------------------------------------------------------------
+    binary_plaque  = as.integer(outcome_num == 2),   # 1 = Plaque (level "2"), 0 = Normal/Thickening
+    pred_plaque    = prob_avg_cat3,                  # P(Plaque) from multinomial model
+    
+    # ------------------------------------------------------------------
+    # Binary comparison 2 (SECONDARY): Any Abnormality vs. Normal
+    # Clinical rationale: Any subclinical atherosclerosis (Thickening or
+    # Plaque) warrants lifestyle counseling and enhanced monitoring.
+    # Predicted probability = P(Thickening) + P(Plaque)
+    # ------------------------------------------------------------------
+    binary_any     = as.integer(outcome_num > 0),     # 1 = Thickening (1) or Plaque (2), 0 = Normal
+    pred_any       = prob_avg_cat2 + prob_avg_cat3    # P(Any abnormality)
+  )
+
+
+# Summarise prevalences
+prev_plaque <- mean(dca_data$binary_plaque)
+prev_any    <- mean(dca_data$binary_any)
+
+
+
+# ==============================================================================
+# Section 2: Binary Decision Curve Analysis (OVR)
+# ==============================================================================
+
+## DCA for Binary comparison 1: Plaque vs. Non-Plaque
+dca_plaque <- dca(binary_plaque ~ pred_plaque,
+                  data       = dca_data,
+                  thresholds = seq(0, 1, by = 0.01),
+                  label      = list(pred_plaque = "MLR Model"))
+
+## DCA for Binary comparison 2: Any Abnormality vs. Normal
+dca_any <- dca(binary_any ~ pred_any,
+               data       = dca_data,
+               thresholds = seq(0, 1, by = 0.01),
+               label      = list(pred_any = "MLR Model"))
+
+
+
+
+# ==============================================================================
+# Section 4: Standardized Net Benefit (sNB)
+# sNB = NB / prevalence  (max value = 1; interpretable as proportion of
+# maximum achievable benefit)
+# Reference: Kerr et al. J Clin Oncol. 2016;34:2534
+# ==============================================================================
+
+nb_plaque_df <- as_tibble(dca_plaque) %>%
+  mutate(snb = net_benefit / prev_plaque)
+
+nb_any_df <- as_tibble(dca_any) %>%
+  mutate(snb = net_benefit / prev_any)
+
+## sNB plots
+create_snb_panel <- function(nb_df_full, thr_range, panel_title,
+                             ylims = c(-0.2, 1.0)) {
+  df <- nb_df_full %>%
+    filter(threshold >= thr_range[1] & threshold <= thr_range[2]) %>%
+    mutate(Strategy = case_when(
+      variable == "all"  ~ "Treat All",
+      variable == "none" ~ "Treat None",
+      TRUE               ~ label
+    ))
+  
+  ggplot(df, aes(x = threshold, y = snb,
+                 color = Strategy, linetype = Strategy)) +
+    geom_line(linewidth = 1.1) +
+    geom_hline(yintercept = 0, color = "gray40", linewidth = 0.5) +
+    scale_color_manual(
+      values = c("Treat All"  = "#999999",
+                 "Treat None" = "#333333",
+                 "MLR Model"  = "#C0392B"),
+      name = NULL) +
+    scale_linetype_manual(
+      values = c("Treat All"  = "dashed",
+                 "Treat None" = "solid",
+                 "MLR Model"  = "solid"),
+      name = NULL) +
+    guides(
+      color    = guide_legend(override.aes = list(linewidth = 2.2)),
+      linetype = guide_legend(override.aes = list(linewidth = 2.2))
+    ) +
+    scale_x_continuous(name = "Threshold Probability",
+                       labels = scales::percent_format(accuracy = 1),
+                       expand = c(0.01, 0)) +
+    scale_y_continuous(name = "Standardized Net Benefit",
+                       limits = ylims, expand = c(0.01, 0)) +
+    theme_classic(base_size = 12) +
+    theme(
+      plot.title        = element_text(size = 19, hjust = 0.5, face = "bold"),
+      axis.title.x      = element_text(size = 13, face = "bold"),
+      axis.title.y      = element_text(size = 13, face = "bold"),
+      legend.position   = c(0.86, 0.88),
+      legend.text       = element_text(size = 10.5),
+      legend.background = element_blank(),
+      legend.key        = element_blank(),
+      panel.border      = element_rect(color = "gray60", fill = NA, linewidth = 0.7),
+      panel.grid.major  = element_line(color = "gray93", linewidth = 0.35)
+    ) +
+    ggtitle(panel_title)
+}
+
+sp1 <- create_snb_panel(nb_plaque_df, c(0, 1),
+                        "(B) Plaque vs. Non-Plaque")
+sp2 <- create_snb_panel(nb_any_df, c(0, 1),
+                        "(C) Any Abnormality vs. Normal")
+
+
+
+# ==============================================================================
+# Section 5 (partial): Threshold distribution scenarios
+# ==============================================================================
+
+dist_scenarios <- list(
+  Uniform = list(
+    plaque = list(dist = "uniform", params = list(min = 0.30, max = 0.70)),
+    any    = list(dist = "uniform", params = list(min = 0.40, max = 0.80))
+  ),
+  Centered = list(  # Centered around prevalence, moderate spread
+    plaque = list(dist = "normal", params = list(mean = 0.50, sd = 0.10)),
+    any    = list(dist = "normal", params = list(mean = 0.60, sd = 0.10))
+  ),
+  `Risk-averse` = list(  # Lower thresholds: treat more patients
+    plaque = list(dist = "normal", params = list(mean = 0.40, sd = 0.05)),
+    any    = list(dist = "normal", params = list(mean = 0.50, sd = 0.05))
+  ),
+  `Risk-tolerant` = list(  # Higher thresholds: treat fewer patients
+    plaque = list(dist = "normal", params = list(mean = 0.60, sd = 0.05)),
+    any    = list(dist = "normal", params = list(mean = 0.70, sd = 0.05))
+  )
+)
+
+
+
+# ==============================================================================
+# Section 5: Weighted Area Under the sNB Curve (wAUCsNB)
+# wAUCsNB = E_{r~f(r)} [sNB(r)]  via Monte Carlo integration
+# Reference: Talluri & Shete (2016); Quintana et al. (2025)
+# ==============================================================================
+
+compute_wAUCsNB <- function(dca_obj, variable_name, prevalence,
+                            threshold_dist, dist_params,
+                            n_mc = 20000, n_boot = 1000) {
+  snb_df <- as_tibble(dca_obj) %>%
+    filter(variable == variable_name) %>%
+    mutate(snb = net_benefit / prevalence) %>%
+    filter(is.finite(snb)) %>%
+    arrange(threshold)
+  if (threshold_dist == "uniform") {
+    r_samp <- runif(n_mc, dist_params$min, dist_params$max)
+  } else {
+    r_samp <- pmax(0.001, pmin(0.99, rnorm(n_mc, dist_params$mean, dist_params$sd)))
+  }
+  snb_at_r <- approx(snb_df$threshold, snb_df$snb, xout = r_samp, rule = 2)$y
+  est <- mean(snb_at_r, na.rm = TRUE)
+  boot_vals <- replicate(n_boot, {
+    idx <- sample(n_mc, replace = TRUE)
+    mean(snb_at_r[idx], na.rm = TRUE)
+  })
+  ci <- quantile(boot_vals, c(0.025, 0.975))
+  list(estimate = est, ci_lower = ci[[1]], ci_upper = ci[[2]])
+}
+
+compute_wAUCsNB_ref <- function(dca_obj, ref_var, prevalence,
+                                threshold_dist, dist_params,
+                                n_mc = 20000, n_boot = 1000) {
+  snb_df <- as_tibble(dca_obj) %>%
+    filter(variable == ref_var) %>%
+    mutate(snb = net_benefit / prevalence) %>%
+    filter(is.finite(snb)) %>%
+    arrange(threshold)
+  if (threshold_dist == "uniform") {
+    r_samp <- runif(n_mc, dist_params$min, dist_params$max)
+  } else {
+    r_samp <- pmax(0.001, pmin(0.99, rnorm(n_mc, dist_params$mean, dist_params$sd)))
+  }
+  snb_at_r <- approx(snb_df$threshold, snb_df$snb, xout = r_samp, rule = 2)$y
+  est <- mean(snb_at_r, na.rm = TRUE)
+  boot_vals <- replicate(n_boot, mean(snb_at_r[sample(n_mc, replace = TRUE)], na.rm = TRUE))
+  ci <- quantile(boot_vals, c(0.025, 0.975))
+  list(estimate = est, ci_lower = ci[[1]], ci_upper = ci[[2]])
+}
+
+wAUC_table <- data.frame()
+for (sc_name in names(dist_scenarios)) {
+  sc  <- dist_scenarios[[sc_name]]
+  r_p  <- compute_wAUCsNB(dca_plaque, "pred_plaque", prev_plaque, sc$plaque$dist, sc$plaque$params)
+  r_a  <- compute_wAUCsNB(dca_any,    "pred_any",    prev_any,    sc$any$dist,    sc$any$params)
+  ta_p <- compute_wAUCsNB_ref(dca_plaque, "all", prev_plaque, sc$plaque$dist, sc$plaque$params)
+  ta_a <- compute_wAUCsNB_ref(dca_any,    "all", prev_any,    sc$any$dist,    sc$any$params)
+  wAUC_table <- bind_rows(wAUC_table, data.frame(
+    Scenario       = sc_name,
+    Strategy       = c("MLR Model", "Treat All", "Treat None"),
+    wAUCsNB_Plaque = c(r_p$estimate, ta_p$estimate, 0),
+    wAUC_P_lo      = c(r_p$ci_lower,  ta_p$ci_lower,  0),
+    wAUC_P_hi      = c(r_p$ci_upper,  ta_p$ci_upper,  0),
+    wAUCsNB_Any    = c(r_a$estimate, ta_a$estimate, 0),
+    wAUC_A_lo      = c(r_a$ci_lower,  ta_a$ci_lower,  0),
+    wAUC_A_hi      = c(r_a$ci_upper,  ta_a$ci_upper,  0)
+  ))
+}
+
+
+# ==============================================================================
+# Section 6: Integrated wAUCsNB (IwAUCsNB)
+# IwAUCsNB = E_{w,r} [w * sNB_plaque(r) + (1-w) * sNB_any(r)]
+# w_plaque ~ Beta(20,10): mean = 2/3, reflects ~2x clinical priority for plaque
+# ==============================================================================
+
+compute_IwAUCsNB <- function(dca_plaque, dca_any, prev_plaque, prev_any,
+                             dist_plaque, dist_any,
+                             beta_a = 20, beta_b = 10,
+                             n_mc = 20000, n_boot = 1000) {
+  if (dist_plaque$dist == "uniform") {
+    r_p <- runif(n_mc, dist_plaque$params$min, dist_plaque$params$max)
+  } else {
+    r_p <- pmax(0.001, pmin(0.99, rnorm(n_mc, dist_plaque$params$mean, dist_plaque$params$sd)))
+  }
+  if (dist_any$dist == "uniform") {
+    r_a <- runif(n_mc, dist_any$params$min, dist_any$params$max)
+  } else {
+    r_a <- pmax(0.001, pmin(0.99, rnorm(n_mc, dist_any$params$mean, dist_any$params$sd)))
+  }
+  w_plaque <- rbeta(n_mc, beta_a, beta_b)
+  snb_p_df <- as_tibble(dca_plaque) %>% filter(variable == "pred_plaque") %>%
+    mutate(snb = net_benefit / prev_plaque) %>% filter(is.finite(snb)) %>% arrange(threshold)
+  snb_a_df <- as_tibble(dca_any) %>% filter(variable == "pred_any") %>%
+    mutate(snb = net_benefit / prev_any) %>% filter(is.finite(snb)) %>% arrange(threshold)
+  snb_p <- approx(snb_p_df$threshold, snb_p_df$snb, xout = r_p, rule = 2)$y
+  snb_a <- approx(snb_a_df$threshold, snb_a_df$snb, xout = r_a, rule = 2)$y
+  IwAUC_samp <- w_plaque * snb_p + (1 - w_plaque) * snb_a
+  IwAUC_est  <- mean(IwAUC_samp, na.rm = TRUE)
+  # Treat All
+  ta_p_df <- as_tibble(dca_plaque) %>% filter(variable == "all") %>%
+    mutate(snb = net_benefit / prev_plaque) %>% filter(is.finite(snb)) %>% arrange(threshold)
+  ta_a_df <- as_tibble(dca_any) %>% filter(variable == "all") %>%
+    mutate(snb = net_benefit / prev_any) %>% filter(is.finite(snb)) %>% arrange(threshold)
+  snb_ta_p <- approx(ta_p_df$threshold, ta_p_df$snb, xout = r_p, rule = 2)$y
+  snb_ta_a <- approx(ta_a_df$threshold, ta_a_df$snb, xout = r_a, rule = 2)$y
+  IwAUC_ta <- mean(w_plaque * snb_ta_p + (1 - w_plaque) * snb_ta_a, na.rm = TRUE)
+  boot_IwAUC <- replicate(n_boot, {
+    idx <- sample(n_mc, replace = TRUE)
+    mean(IwAUC_samp[idx], na.rm = TRUE)
+  })
+  ci <- quantile(boot_IwAUC, c(0.025, 0.975))
+  list(MLR_IwAUCsNB = IwAUC_est, ci_lower = ci[[1]], ci_upper = ci[[2]],
+       TreatAll_IwAUCsNB = IwAUC_ta, TreatNone_IwAUCsNB = 0)
+}
+
+IwAUC_table <- data.frame()
+for (sc_name in names(dist_scenarios)) {
+  sc  <- dist_scenarios[[sc_name]]
+  res <- compute_IwAUCsNB(dca_plaque, dca_any, prev_plaque, prev_any,
+                          sc$plaque, sc$any, beta_a = 20, beta_b = 10)
+  IwAUC_table <- bind_rows(IwAUC_table, data.frame(
+    Scenario           = sc_name,
+    MLR_IwAUCsNB       = res$MLR_IwAUCsNB,
+    CI_lower           = res$ci_lower,
+    CI_upper           = res$ci_upper,
+    TreatAll_IwAUCsNB  = res$TreatAll_IwAUCsNB,
+    TreatNone_IwAUCsNB = 0
+  ))
+}
+
+# Export numerical results for reporting
+write.csv(wAUC_table,  "Table_wAUCsNB.csv",  row.names = FALSE)
+write.csv(IwAUC_table, "Table_IwAUCsNB.csv", row.names = FALSE)
+
+
+# ==============================================================================
+# Section 7: Sensitivity Analysis -- IwAUCsNB as Function of Importance Weights
+# Demonstrates robustness of the clinical utility conclusion across all
+# possible w_plaque values (Quintana et al. 2025, Figs 4-5)
+# ==============================================================================
+
+compute_IwAUC_fixed_w <- function(w_plaque_fixed,
+                                  dca_plaque, dca_any,
+                                  prev_plaque, prev_any,
+                                  dist_plaque, dist_any,
+                                  n_mc = 20000) {
+  if (dist_plaque$dist == "uniform") {
+    r_p <- runif(n_mc, dist_plaque$params$min, dist_plaque$params$max)
+  } else {
+    r_p <- pmax(0.001, pmin(0.999, rnorm(n_mc, dist_plaque$params$mean, dist_plaque$params$sd)))
+  }
+  if (dist_any$dist == "uniform") {
+    r_a <- runif(n_mc, dist_any$params$min, dist_any$params$max)
+  } else {
+    r_a <- pmax(0.001, pmin(0.999, rnorm(n_mc, dist_any$params$mean, dist_any$params$sd)))
+  }
+  
+  snb_p_df <- as_tibble(dca_plaque) %>%
+    filter(variable == "pred_plaque") %>%
+    mutate(snb = net_benefit / prev_plaque) %>% arrange(threshold)
+  snb_a_df <- as_tibble(dca_any) %>%
+    filter(variable == "pred_any") %>%
+    mutate(snb = net_benefit / prev_any) %>% arrange(threshold)
+  
+  snb_p <- approx(snb_p_df$threshold, snb_p_df$snb, xout = r_p, rule = 2)$y
+  snb_a <- approx(snb_a_df$threshold, snb_a_df$snb, xout = r_a, rule = 2)$y
+  mean(w_plaque_fixed * snb_p + (1 - w_plaque_fixed) * snb_a, na.rm = TRUE)
+}
+
+w_seq <- seq(0, 1, by = 0.025)
+
+weight_sens_df <- data.frame()
+for (sc_name in names(dist_scenarios)) {
+  sc <- dist_scenarios[[sc_name]]
+  IwAUC_vals <- sapply(w_seq, function(w) {
+    compute_IwAUC_fixed_w(w, dca_plaque, dca_any, prev_plaque, prev_any,
+                          sc$plaque, sc$any)
+  })
+  weight_sens_df <- bind_rows(weight_sens_df, data.frame(
+    w_plaque   = w_seq,
+    IwAUCsNB   = IwAUC_vals,
+    Scenario   = sc_name
+  ))
+}
+
+## Plot: IwAUCsNB vs. importance weight
+p_weight_sens <- ggplot(weight_sens_df,
+                        aes(x = w_plaque, y = IwAUCsNB,
+                            color = Scenario, linetype = Scenario)) +
+  geom_line(linewidth = 1.15) +
+  geom_point(data = weight_sens_df %>% filter(abs(w_plaque - 0.667) < 0.013),
+             shape = 17, size = 3, show.legend = FALSE) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50", linewidth = 0.6) +
+  annotate("text", x = 0.70, y = 0.018, size = 3.2, color = "gray40",
+           label = "Beta(20,10) mean") +
+  scale_x_continuous(
+    name   = bquote(bold(w[Plaque] ~ "(relative priority: plaque vs. any-abnormality comparison)")),
+    labels = scales::percent_format(accuracy = 1),
+    breaks = seq(0, 1, 0.25)
+  ) +
+  scale_y_continuous(name = "Integrated wAUCsNB") +
+  scale_color_brewer(palette = "Dark2",
+                     name   = "Clinician Threshold Preference f(r)") +
+  scale_linetype_manual(
+    values = c("Uniform" = "solid", "Centered" = "dashed",
+               "Risk-averse" = "dotdash", "Risk-tolerant" = "dotted"),
+    name   = "Clinician Threshold Preference f(r)"
+  ) +
+  guides(
+    color    = guide_legend(override.aes = list(linewidth = 2.2, linetype = "solid")),
+    linetype = "none"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    plot.title      = element_text(size = 19, hjust = 0.5, face = "bold"),
+    axis.title.x    = element_text(size = 13, face = "bold"),
+    axis.title.y    = element_text(size = 13, face = "bold"),
+    legend.position = c(0.18, 0.18),
+    legend.text     = element_text(size = 12),
+    legend.title    = element_text(size = 12, face = "bold"),
+    legend.background = element_blank(),
+    legend.key        = element_blank(),
+    panel.border    = element_rect(color = "gray60", fill = NA, linewidth = 0.7),
+    panel.grid.major = element_line(color = "gray93", linewidth = 0.35)
+  ) +
+  ggtitle("(A) Sensitivity of Clinical Utility to Outcome Prioritization")
+
+
+# ==============================================================================
+# Combined Figure: (A) IwAUCsNB sensitivity + (B)(C) sNB curves
+# ==============================================================================
+
+fig_combined <- p_weight_sens / (sp1 | sp2) +
+  plot_layout(heights = c(1, 1))
+
+ggsave("CAS_DCA.png", plot = fig_combined,
+       width = 12, height = 11, dpi = 300, bg = "white")
